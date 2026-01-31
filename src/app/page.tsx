@@ -15,7 +15,7 @@ export default async function HomePage() {
           <h2>Latest Series</h2>
           <p className="small">Komik & novel terbaru dari para kreator.</p>
           <div style={{ display: "grid", gap: 12 }}>
-            {series.map((s) => (
+            {series.map((s: (typeof series)[number]) => (
               <Link key={s.id} href={`/series/${s.id}`} className="card">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div>

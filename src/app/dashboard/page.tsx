@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 
+
 export default async function DashboardPage() {
   const session = await auth();
   const userId = (session?.user as any)?.id as string | undefined;
@@ -57,7 +58,7 @@ export default async function DashboardPage() {
           <p className="small">Buat komik atau novel, lalu publish episode/chapter.</p>
 
           <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-            {mySeries.map((s) => (
+            {mySeries.map((s: (typeof mySeries)[number]) => (
               <div key={s.id} className="card">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div>

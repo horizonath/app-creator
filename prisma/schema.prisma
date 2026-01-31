@@ -38,46 +38,48 @@ enum LedgerReason {
 }
 
 model User {
-  id                 String   @id @default(cuid())
-  name               String?
-  email              String?  @unique
-  emailVerified      DateTime?
-  image              String?
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
 
-  username           String?  @unique
-  xp                 Int      @default(0)
-  creditsBalance     Int      @default(0)
-  creatorCredits     Int      @default(0)
+  username       String? @unique
+  xp             Int     @default(0)
+  creditsBalance Int     @default(0)
+  creatorCredits Int     @default(0)
 
-  lastFaucetClaimAt  DateTime?
-  membershipPlan     MembershipPlan @default(FREE)
+  lastFaucetClaimAt     DateTime?
+  membershipPlan        MembershipPlan @default(FREE)
   membershipActiveUntil DateTime?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  accounts           Account[]
-  sessions           Session[]
+  accounts Account[]
+  sessions Session[]
 
-  series             Series[]
-  comments           Comment[]
-  likes              EpisodeLike[]
-  views              EpisodeView[]
-  unlocks            EpisodeUnlock[]
+  series   Series[]
+  comments Comment[]
+  likes    EpisodeLike[]
+  views    EpisodeView[]
+  unlocks  EpisodeUnlock[]
 
-  tipsSent           Tip[] @relation("tipsSent")
-  tipsReceived       Tip[] @relation("tipsReceived")
+  tipsSent     Tip[] @relation("tipsSent")
+  tipsReceived Tip[] @relation("tipsReceived")
 
-  creditLedger       CreditsLedger[]
-  xpLedger           XpLedger[]
+  creditLedger CreditsLedger[]
+  xpLedger     XpLedger[]
+
+  dailyUserScores DailyUserScore[]
 
   @@index([createdAt])
 }
 
 model Series {
-  id          String      @id @default(cuid())
-  ownerId     String
-  owner       User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   type        ContentType
   title       String
@@ -86,41 +88,43 @@ model Series {
   genre       String?
   status      String      @default("ONGOING")
 
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  episodes    Episode[]
+  episodes Episode[]
+
+  tips Tip[]
 
   @@index([ownerId])
   @@index([type])
 }
 
 model Episode {
-  id          String     @id @default(cuid())
-  seriesId    String
-  series      Series     @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  seriesId String
+  series   Series @relation(fields: [seriesId], references: [id], onDelete: Cascade)
 
   title       String
   number      Int
   publishedAt DateTime?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Access control
-  isLocked    Boolean    @default(false)
-  creditCost  Int        @default(1)
-  unlockType  UnlockType @default(FREE)
-  unlockDurationHours Int @default(24)
+  isLocked            Boolean    @default(false)
+  creditCost          Int        @default(1)
+  unlockType          UnlockType @default(FREE)
+  unlockDurationHours Int        @default(24)
 
   // For NOVEL
-  novelBody   String?    // Markdown/plain text
+  novelBody String? // Markdown/plain text
 
-  pages       EpisodePage[]
-  views       EpisodeView[]
-  likes       EpisodeLike[]
-  comments    Comment[]
-  unlocks     EpisodeUnlock[]
-  tips        Tip[]
+  pages    EpisodePage[]
+  views    EpisodeView[]
+  likes    EpisodeLike[]
+  comments Comment[]
+  unlocks  EpisodeUnlock[]
+  tips     Tip[]
 
   @@unique([seriesId, number])
   @@index([seriesId])
@@ -128,9 +132,9 @@ model Episode {
 }
 
 model EpisodePage {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   episodeId String
-  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  episode   Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
   pageIndex Int
   imageUrl  String
@@ -144,8 +148,8 @@ model EpisodeView {
   episodeId String
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
   @@index([episodeId, createdAt])
   @@index([userId, createdAt])
@@ -157,8 +161,8 @@ model EpisodeLike {
   episodeId String
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, episodeId])
   @@index([episodeId, createdAt])
@@ -171,21 +175,21 @@ model Comment {
   content   String
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
   @@index([episodeId, createdAt])
 }
 
 model EpisodeUnlock {
-  id        String   @id @default(cuid())
-  userId    String
-  episodeId String
-  unlockedAt DateTime @default(now())
-  expiresAt DateTime?
+  id         String    @id @default(cuid())
+  userId     String
+  episodeId  String
+  unlockedAt DateTime  @default(now())
+  expiresAt  DateTime?
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, episodeId])
   @@index([episodeId])
@@ -201,10 +205,10 @@ model Tip {
   amount     Int
   createdAt  DateTime @default(now())
 
-  fromUser   User     @relation("tipsSent", fields: [fromUserId], references: [id], onDelete: Cascade)
-  toUser     User     @relation("tipsReceived", fields: [toUserId], references: [id], onDelete: Cascade)
-  episode    Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
-  series     Series?  @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  fromUser User     @relation("tipsSent", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User     @relation("tipsReceived", fields: [toUserId], references: [id], onDelete: Cascade)
+  episode  Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  series   Series?  @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
   @@index([toUserId, createdAt])
   @@index([fromUserId, createdAt])
@@ -219,7 +223,7 @@ model CreditsLedger {
   refId     String?
   createdAt DateTime     @default(now())
 
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([reason, createdAt])
@@ -234,19 +238,19 @@ model XpLedger {
   refId     String?
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
 }
 
 model DailyUserScore {
-  id        String    @id @default(cuid())
-  date      DateTime
-  userId    String
-  role      ScoreRole
-  score     Int       @default(0)
+  id     String    @id @default(cuid())
+  date   DateTime
+  userId String
+  role   ScoreRole
+  score  Int       @default(0)
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([date, userId, role])
   @@index([role, date])

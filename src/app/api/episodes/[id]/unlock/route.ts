@@ -1,7 +1,8 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
-export async function POST(_: Request, { params }: { params: { id: string } }) {
+export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const session = await auth();
   const userId = (session?.user as any)?.id as string | undefined;
   if (!userId) return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
@@ -9,7 +10,7 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
   const now = new Date();
 
   const ep = await prisma.episode.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: { series: true },
   });
   if (!ep) return Response.json({ error: "EPISODE_NOT_FOUND" }, { status: 404 });

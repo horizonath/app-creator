@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 
-export default async function SeriesPage({ params }: { params: { id: string } }) {
+export default async function SeriesPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+
   const s = await prisma.series.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: { owner: true, episodes: { orderBy: { number: "asc" } } },
   });
   if (!s) return <div className="card">Series not found.</div>;
@@ -23,7 +25,7 @@ export default async function SeriesPage({ params }: { params: { id: string } })
 
       <h3>Episodes</h3>
       <div style={{ display: "grid", gap: 10 }}>
-        {s.episodes.map((e) => (
+        {s.episodes.map((e: (typeof s.episodes)[number]) => (
           <Link key={e.id} href={`/episode/${e.id}`} className="card">
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div>

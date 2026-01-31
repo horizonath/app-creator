@@ -7,8 +7,13 @@ function rangeStart(days: number) {
   return start;
 }
 
-export default async function LeaderboardPage({ searchParams }: { searchParams: { range?: string } }) {
-  const range = searchParams.range ?? "7d";
+export default async function LeaderboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
+  const sp = await searchParams;
+  const range = sp?.range ?? "7d";
   const days = range === "30d" ? 30 : range === "all" ? 3650 : 7;
 
   const start = days === 3650 ? new Date("2000-01-01T00:00:00.000Z") : rangeStart(days);
@@ -29,9 +34,13 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
     take: 20,
   });
 
-  const ids = Array.from(new Set([...reader.map(r=>r.userId), ...creator.map(c=>c.userId)]));
-  const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id:true, username:true, email:true } });
-  const map = new Map(users.map(u=>[u.id, u]));
+  const ids = Array.from(
+  new Set([
+    ...reader.map((r: (typeof reader)[number]) => r.userId),
+    ...creator.map((c: (typeof creator)[number]) => c.userId),
+  ])
+);const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id:true, username:true, email:true } });
+  const map = new Map<string, (typeof users)[number]>(users.map((u: (typeof users)[number]) => [u.id, u] as const));
 
   return (
     <div className="card">
@@ -50,7 +59,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
         <div className="card" style={{ flex: 1, minWidth: 320 }}>
           <h3>Top Readers ({range})</h3>
           <ol>
-            {reader.map((r) => {
+            {reader.map((r: (typeof reader)[number]) => {
               const u = map.get(r.userId);
               return <li key={r.userId}><strong>{u?.username ?? u?.email ?? "unknown"}</strong> — {r._sum.score ?? 0}</li>;
             })}
@@ -60,7 +69,7 @@ export default async function LeaderboardPage({ searchParams }: { searchParams: 
         <div className="card" style={{ flex: 1, minWidth: 320 }}>
           <h3>Top Creators ({range})</h3>
           <ol>
-            {creator.map((c) => {
+            {creator.map((c: (typeof creator)[number]) => {
               const u = map.get(c.userId);
               return <li key={c.userId}><strong>{u?.username ?? u?.email ?? "unknown"}</strong> — {c._sum.score ?? 0}</li>;
             })}

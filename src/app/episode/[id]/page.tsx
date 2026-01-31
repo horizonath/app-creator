@@ -36,12 +36,13 @@ async function canReadEpisode(episodeId: string, userId?: string) {
   return { ok: false, reason: "LOCKED" as const, ep };
 }
 
-export default async function EpisodePage({ params }: { params: { id: string } }) {
+export default async function EpisodePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const session = await auth();
   const userId = (session?.user as any)?.id as string | undefined;
 
   const ep = await prisma.episode.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: {
       series: { include: { owner: true } },
       pages: { orderBy: { pageIndex: "asc" } },
@@ -55,13 +56,6 @@ export default async function EpisodePage({ params }: { params: { id: string } }
   // record a view only if readable (and logged in)
   if (access.ok) {
     await recordView(ep.id, userId);
-  }
-
-  async function unlockAction() {
-    "use server";
-    if (!userId) throw new Error("Not logged in");
-    const res = await fetch(`${process.env.NEXTAUTH_URL}/api/episodes/${ep.id}/unlock`, { method: "POST", headers: { "Content-Type": "application/json", "Cookie": "" } as any });
-    // we won't use this fetch server-side for auth in MVP; use client button calling route instead.
   }
 
   return (
@@ -94,7 +88,7 @@ export default async function EpisodePage({ params }: { params: { id: string } }
           creatorId={ep.series.ownerId}
         />
       ) : (
-        <ContentView type={ep.series.type} pages={ep.pages.map(p=>p.imageUrl)} novelBody={ep.novelBody} />
+        <ContentView type={ep.series.type} pages={ep.pages.map((p: (typeof ep.pages)[number]) => p.imageUrl)} novelBody={ep.novelBody} />
       )}
 
       <hr />
@@ -165,7 +159,7 @@ async function Comments({ episodeId }: { episodeId: string }) {
         <button className="btn secondary" type="submit">Add Comment</button>
       </form>
       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-        {comments.map((c) => (
+        {comments.map((c: (typeof comments)[number]) => (
           <div key={c.id} className="card">
             <div className="small">{c.user.username ?? c.user.email ?? "unknown"} • {new Date(c.createdAt).toLocaleString()}</div>
             <div style={{ whiteSpace: "pre-wrap" }}>{c.content}</div>

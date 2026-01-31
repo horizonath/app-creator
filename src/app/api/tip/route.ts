@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 
 const Body = z.object({
   toUserId: z.string().min(1),
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   if (!from || !to) return Response.json({ error: "USER_NOT_FOUND" }, { status: 404 });
   if (from.creditsBalance < parsed.data.amount) return Response.json({ error: "INSUFFICIENT_CREDITS" }, { status: 402 });
 
-  const tip = await prisma.$transaction(async (tx) => {
+const tip = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const created = await tx.tip.create({
       data: {
         fromUserId,
