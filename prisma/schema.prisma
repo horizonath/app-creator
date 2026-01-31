@@ -1,0 +1,291 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ContentType {
+  COMIC
+  NOVEL
+}
+
+enum UnlockType {
+  FREE
+  CREDIT
+  MEMBERSHIP_ONLY
+}
+
+enum MembershipPlan {
+  FREE
+  PREMIUM
+}
+
+enum ScoreRole {
+  READER
+  CREATOR
+}
+
+enum LedgerReason {
+  FAUCET_CLAIM
+  UNLOCK_EPISODE
+  TIP_SENT
+  TIP_RECEIVED
+  ADMIN_ADJUST
+  MEMBERSHIP_BONUS
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  name               String?
+  email              String?  @unique
+  emailVerified      DateTime?
+  image              String?
+
+  username           String?  @unique
+  xp                 Int      @default(0)
+  creditsBalance     Int      @default(0)
+  creatorCredits     Int      @default(0)
+
+  lastFaucetClaimAt  DateTime?
+  membershipPlan     MembershipPlan @default(FREE)
+  membershipActiveUntil DateTime?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  accounts           Account[]
+  sessions           Session[]
+
+  series             Series[]
+  comments           Comment[]
+  likes              EpisodeLike[]
+  views              EpisodeView[]
+  unlocks            EpisodeUnlock[]
+
+  tipsSent           Tip[] @relation("tipsSent")
+  tipsReceived       Tip[] @relation("tipsReceived")
+
+  creditLedger       CreditsLedger[]
+  xpLedger           XpLedger[]
+
+  @@index([createdAt])
+}
+
+model Series {
+  id          String      @id @default(cuid())
+  ownerId     String
+  owner       User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  type        ContentType
+  title       String
+  description String?
+  coverUrl    String?
+  genre       String?
+  status      String      @default("ONGOING")
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  episodes    Episode[]
+
+  @@index([ownerId])
+  @@index([type])
+}
+
+model Episode {
+  id          String     @id @default(cuid())
+  seriesId    String
+  series      Series     @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  title       String
+  number      Int
+  publishedAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Access control
+  isLocked    Boolean    @default(false)
+  creditCost  Int        @default(1)
+  unlockType  UnlockType @default(FREE)
+  unlockDurationHours Int @default(24)
+
+  // For NOVEL
+  novelBody   String?    // Markdown/plain text
+
+  pages       EpisodePage[]
+  views       EpisodeView[]
+  likes       EpisodeLike[]
+  comments    Comment[]
+  unlocks     EpisodeUnlock[]
+  tips        Tip[]
+
+  @@unique([seriesId, number])
+  @@index([seriesId])
+  @@index([publishedAt])
+}
+
+model EpisodePage {
+  id        String   @id @default(cuid())
+  episodeId String
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  pageIndex Int
+  imageUrl  String
+
+  @@unique([episodeId, pageIndex])
+}
+
+model EpisodeView {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@index([episodeId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model EpisodeLike {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, episodeId])
+  @@index([episodeId, createdAt])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+  content   String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@index([episodeId, createdAt])
+}
+
+model EpisodeUnlock {
+  id        String   @id @default(cuid())
+  userId    String
+  episodeId String
+  unlockedAt DateTime @default(now())
+  expiresAt DateTime?
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, episodeId])
+  @@index([episodeId])
+  @@index([userId, expiresAt])
+}
+
+model Tip {
+  id         String   @id @default(cuid())
+  fromUserId String
+  toUserId   String
+  episodeId  String?
+  seriesId   String?
+  amount     Int
+  createdAt  DateTime @default(now())
+
+  fromUser   User     @relation("tipsSent", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser     User     @relation("tipsReceived", fields: [toUserId], references: [id], onDelete: Cascade)
+  episode    Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  series     Series?  @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+
+  @@index([toUserId, createdAt])
+  @@index([fromUserId, createdAt])
+}
+
+model CreditsLedger {
+  id        String       @id @default(cuid())
+  userId    String
+  amount    Int
+  reason    LedgerReason
+  refType   String?
+  refId     String?
+  createdAt DateTime     @default(now())
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([reason, createdAt])
+}
+
+model XpLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  amount    Int
+  reason    String
+  refType   String?
+  refId     String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model DailyUserScore {
+  id        String    @id @default(cuid())
+  date      DateTime
+  userId    String
+  role      ScoreRole
+  score     Int       @default(0)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([date, userId, role])
+  @@index([role, date])
+}
+
+// ---- Auth.js models (NextAuth / Auth.js) ----
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
