@@ -1,59 +1,96 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function POST(
+  _req: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
   const session = await auth();
   const userId = (session?.user as any)?.id as string | undefined;
   if (!userId) return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
 
-  const now = new Date();
-
   const ep = await prisma.episode.findUnique({
     where: { id },
-    include: { series: true },
+    select: {
+      id: true,
+      isLocked: true,
+      unlockCost: true,
+      series: { select: { creatorId: true } },
+    },
   });
   if (!ep) return Response.json({ error: "EPISODE_NOT_FOUND" }, { status: 404 });
 
-  if (!ep.isLocked || ep.unlockType === "FREE") return Response.json({ ok: true, message: "Already free" });
+  // If not locked, nothing to do
+  if (!ep.isLocked) return Response.json({ ok: true, message: "Already free" });
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  // Check already unlocked (unique constraint)
+  const existing = await prisma.unlock.findUnique({
+    where: { episodeId_userId: { episodeId: id, userId } },
+    select: { id: true },
+  });
+  if (existing) return Response.json({ ok: true, message: "Already unlocked" });
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      creditsBalance: true,
+      membershipPlan: true,
+      membershipActiveUntil: true,
+    },
+  });
   if (!user) return Response.json({ error: "USER_NOT_FOUND" }, { status: 404 });
 
-  // membership bypass
-  if (user.membershipPlan === "PREMIUM" && user.membershipActiveUntil && user.membershipActiveUntil > now) {
-    return Response.json({ ok: true, message: "Membership access" });
+  const now = new Date();
+  const membershipActive =
+    user.membershipPlan === "PREMIUM" &&
+    user.membershipActiveUntil &&
+    user.membershipActiveUntil > now;
+
+  const cost = Math.max(0, ep.unlockCost ?? 1);
+  const creatorId = ep.series.creatorId;
+
+  // If no membership, must pay credits
+  if (!membershipActive && user.creditsBalance < cost) {
+    return Response.json({ error: "INSUFFICIENT_CREDITS" }, { status: 402 });
   }
 
-  if (ep.unlockType === "MEMBERSHIP_ONLY") return Response.json({ error: "MEMBERSHIP_ONLY" }, { status: 403 });
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // record unlock (so user can access it later)
+    const u = await tx.unlock.create({
+      data: { userId, episodeId: id, cost: membershipActive ? 0 : cost },
+      select: { id: true },
+    });
 
-  const existing = await prisma.episodeUnlock.findUnique({ where: { userId_episodeId: { userId, episodeId: ep.id } } });
-  if (existing && (!existing.expiresAt || existing.expiresAt > now)) {
-    return Response.json({ ok: true, message: "Already unlocked" });
-  }
+    // charge credits if needed
+    if (!membershipActive) {
+      await tx.user.update({
+        where: { id: userId },
+        data: { creditsBalance: { decrement: cost } },
+      });
+    }
 
-  if (user.creditsBalance < ep.creditCost) {
-    return Response.json({ error: "INSUFFICIENT_CREDITS", cost: ep.creditCost, balance: user.creditsBalance }, { status: 402 });
-  }
-
-  const expiresAt = new Date(now.getTime() + ep.unlockDurationHours * 60 * 60_000);
-
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: userId },
+    // ledger
+    await tx.walletTx.create({
       data: {
-        creditsBalance: { decrement: ep.creditCost },
-        creditLedger: { create: { amount: -ep.creditCost, reason: "UNLOCK_EPISODE", refType: "episode", refId: ep.id } },
-        xp: { increment: 1 },
-        xpLedger: { create: { amount: 1, reason: "UNLOCK_EPISODE", refType: "episode", refId: ep.id } },
+        userId,
+        type: "UNLOCK_EPISODE",
+        xpDelta: 0,
+        creditDelta: membershipActive ? 0 : -cost,
+        refType: "EPISODE",
+        refId: id,
+        meta: { unlockId: u.id, membershipActive, cost },
       },
-    }),
-    prisma.episodeUnlock.upsert({
-      where: { userId_episodeId: { userId, episodeId: ep.id } },
-      create: { userId, episodeId: ep.id, expiresAt },
-      update: { expiresAt },
-    }),
-  ]);
+    });
 
-  return Response.json({ ok: true, expiresAt });
+    // (optional) creator reward: kamu bisa tambah logic di sini nanti
+    // contoh: credit masuk ke creator per unlock, atau XP creator bertambah.
+
+    return { unlockId: u.id, membershipActive, costCharged: membershipActive ? 0 : cost };
+  });
+
+  return Response.json({ ok: true, ...result });
 }

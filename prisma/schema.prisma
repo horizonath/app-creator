@@ -28,75 +28,100 @@ enum ScoreRole {
   CREATOR
 }
 
-enum LedgerReason {
+enum WalletTxType {
   FAUCET_CLAIM
   UNLOCK_EPISODE
-  TIP_SENT
-  TIP_RECEIVED
+  TIP
+  BUY_CREDIT
+  XP_TO_CREDIT
+  CREDIT_TO_XP
+  STAKE_XP
+  UNSTAKE_XP
   ADMIN_ADJUST
-  MEMBERSHIP_BONUS
 }
 
+
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
+  id       String  @id @default(cuid())
+  email    String  @unique
+  username String? @unique
+  image    String? // avatar url (NextAuth biasanya pakai "image")
+  bio      String?
 
-  username       String? @unique
-  xp             Int     @default(0)
-  creditsBalance Int     @default(0)
-  creatorCredits Int     @default(0)
+  // social links
+  xUrl         String?
+  instagramUrl String?
+  tiktokUrl    String?
+  youtubeUrl   String?
+  websiteUrl   String?
 
-  lastFaucetClaimAt     DateTime?
+  // roles
+  isCreator Boolean @default(false)
+
+  // economy & progression
+  xp                    Int            @default(0)
+  creditsBalance        Int            @default(0)
   membershipPlan        MembershipPlan @default(FREE)
   membershipActiveUntil DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  accounts Account[]
-  sessions Session[]
-
-  series   Series[]
-  comments Comment[]
-  likes    EpisodeLike[]
-  views    EpisodeView[]
-  unlocks  EpisodeUnlock[]
+  // relations
+  series       Series[]
+  comments     Comment[]
+  likes        Like[]
+  favorites    Favorite[]
+  ratings      Rating[]
+  unlocks      Unlock[]
+  episodeReads EpisodeRead[]
+  episodeViews EpisodeView[]
+  creatorStats CreatorStat?
+  readerStats  ReaderStat?
 
   tipsSent     Tip[] @relation("tipsSent")
   tipsReceived Tip[] @relation("tipsReceived")
 
-  creditLedger CreditsLedger[]
-  xpLedger     XpLedger[]
-
-  dailyUserScores DailyUserScore[]
-
-  @@index([createdAt])
+  // (jika kamu punya DailyUserScore / Tip / dsb) biarkan tetap, tapi pastikan relasi kebaliknya ada.
+  DailyUserScore DailyUserScore[]
+  Account        Account[]
+  Session        Session[]
+  WalletTx       WalletTx[]
 }
 
 model Series {
-  id      String @id @default(cuid())
-  ownerId String
-  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  id        String @id @default(cuid())
+  creatorId String
+  creator User? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
 
-  type        ContentType
-  title       String
-  description String?
-  coverUrl    String?
-  genre       String?
-  status      String      @default("ONGOING")
+  type          ContentType
+  title         String
+  description   String?
+  coverImageUrl String?
+
+  // discoverability
+  isPublished Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   episodes Episode[]
 
-  tips Tip[]
+  // genre (many-to-many)
+  genres SeriesGenre[]
 
-  @@index([ownerId])
-  @@index([type])
+  // engagement
+  favorites Favorite[]
+  ratings   Rating[]
+
+  // aggregation (optional quick fields)
+  totalViews    Int   @default(0)
+  totalLikes    Int   @default(0)
+  totalComments Int   @default(0)
+  avgRating     Float @default(0)
+
+  // if you have tips linked to series:
+  tips Tip[] // penting untuk opposite relation Tip.series (kalau Tip punya seriesId)
 }
 
 model Episode {
@@ -104,31 +129,27 @@ model Episode {
   seriesId String
   series   Series @relation(fields: [seriesId], references: [id], onDelete: Cascade)
 
-  title       String
-  number      Int
-  publishedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  title      String
+  number     Int
+  isLocked   Boolean @default(false)
+  unlockCost Int     @default(1)
 
-  // Access control
-  isLocked            Boolean    @default(false)
-  creditCost          Int        @default(1)
-  unlockType          UnlockType @default(FREE)
-  unlockDurationHours Int        @default(24)
+  // content
+  // COMIC: pages; NOVEL: novelBody
+  novelBody String?
 
-  // For NOVEL
-  novelBody String? // Markdown/plain text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   pages    EpisodePage[]
-  views    EpisodeView[]
-  likes    EpisodeLike[]
   comments Comment[]
-  unlocks  EpisodeUnlock[]
-  tips     Tip[]
+  likes    Like[]
+  unlocks  Unlock[]
+  reads    EpisodeRead[]
+  views    EpisodeView[]
+  Tip      Tip[]
 
   @@unique([seriesId, number])
-  @@index([seriesId])
-  @@index([publishedAt])
 }
 
 model EpisodePage {
@@ -136,74 +157,102 @@ model EpisodePage {
   episodeId String
   episode   Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
 
-  pageIndex Int
-  imageUrl  String
+  pageNumber Int
+  imageUrl   String
 
-  @@unique([episodeId, pageIndex])
+  @@unique([episodeId, pageNumber])
 }
 
 model EpisodeView {
-  id        String   @id @default(cuid())
-  userId    String
+  id        String  @id @default(cuid())
   episodeId String
+  episode   Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  // logged-in viewer
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // guest viewer
+  anonId String? // cookie anon id
+
+  // Day bucket (set to 00:00 UTC)
+  day DateTime?
+
   createdAt DateTime @default(now())
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-
-  @@index([episodeId, createdAt])
-  @@index([userId, createdAt])
+  // Unique view per day:
+  // - user: unique(userId, episodeId, day)
+  // - guest: unique(anonId, episodeId, day)
+  @@unique([episodeId, day, userId])
+  @@unique([episodeId, day, anonId])
+  @@index([episodeId, day])
 }
 
-model EpisodeLike {
+model Like {
   id        String   @id @default(cuid())
-  userId    String
   episodeId String
+  userId    String
   createdAt DateTime @default(now())
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, episodeId])
-  @@index([episodeId, createdAt])
+  @@unique([episodeId, userId])
+  @@index([episodeId])
 }
 
 model Comment {
   id        String   @id @default(cuid())
-  userId    String
   episodeId String
+  userId    String
   content   String
   createdAt DateTime @default(now())
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([episodeId, createdAt])
+  @@index([episodeId])
 }
 
-model EpisodeUnlock {
-  id         String    @id @default(cuid())
-  userId     String
-  episodeId  String
-  unlockedAt DateTime  @default(now())
-  expiresAt  DateTime?
+model Unlock {
+  id        String   @id @default(cuid())
+  episodeId String
+  userId    String
+  cost      Int      @default(1)
+  createdAt DateTime @default(now())
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, episodeId])
-  @@index([episodeId])
-  @@index([userId, expiresAt])
+  @@unique([episodeId, userId])
+  @@index([userId, createdAt])
+}
+
+model EpisodeRead {
+  id        String   @id @default(cuid())
+  episodeId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([episodeId, userId]) // anti-farm
+  @@index([userId, createdAt])
 }
 
 model Tip {
-  id         String   @id @default(cuid())
+  id         String  @id @default(cuid())
   fromUserId String
   toUserId   String
   episodeId  String?
   seriesId   String?
   amount     Int
-  createdAt  DateTime @default(now())
+  refType    String?
+  refId      String?
+  meta       Json?
+
+  createdAt DateTime @default(now())
 
   fromUser User     @relation("tipsSent", fields: [fromUserId], references: [id], onDelete: Cascade)
   toUser   User     @relation("tipsReceived", fields: [toUserId], references: [id], onDelete: Cascade)
@@ -212,35 +261,6 @@ model Tip {
 
   @@index([toUserId, createdAt])
   @@index([fromUserId, createdAt])
-}
-
-model CreditsLedger {
-  id        String       @id @default(cuid())
-  userId    String
-  amount    Int
-  reason    LedgerReason
-  refType   String?
-  refId     String?
-  createdAt DateTime     @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, createdAt])
-  @@index([reason, createdAt])
-}
-
-model XpLedger {
-  id        String   @id @default(cuid())
-  userId    String
-  amount    Int
-  reason    String
-  refType   String?
-  refId     String?
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, createdAt])
 }
 
 model DailyUserScore {
@@ -292,4 +312,88 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model Genre {
+  id   String @id @default(cuid())
+  slug String @unique
+  name String
+
+  series SeriesGenre[]
+}
+
+model SeriesGenre {
+  seriesId String
+  genreId  String
+
+  series Series @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  genre  Genre  @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([seriesId, genreId])
+}
+
+model Favorite {
+  userId    String
+  seriesId  String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  series Series @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@id([userId, seriesId])
+}
+
+model Rating {
+  userId    String
+  seriesId  String
+  value     Int // 1..5
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  series Series @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@id([userId, seriesId])
+}
+
+model CreatorStat {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  totalViews    Int      @default(0)
+  totalLikes    Int      @default(0)
+  totalComments Int      @default(0)
+  updatedAt     DateTime @updatedAt
+}
+
+model ReaderStat {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  totalReads Int      @default(0)
+  updatedAt  DateTime @updatedAt
+}
+
+model WalletTx {
+  id     String       @id @default(cuid())
+  userId String
+  type   WalletTxType
+
+  // perubahan saldo
+  xpDelta     Int @default(0)
+  creditDelta Int @default(0)
+
+  // referensi transaksi ke objek tertentu
+  refType String?
+  refId   String?
+
+  // meta tambahan (rates, fee, ip hash, dll)
+  meta Json?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
 }

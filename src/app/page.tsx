@@ -5,7 +5,7 @@ export default async function HomePage() {
   const series = await prisma.series.findMany({
     orderBy: { createdAt: "desc" },
     take: 20,
-    include: { owner: { select: { username: true, email: true } }, _count: { select: { episodes: true } } },
+    include: { creator: { select: { username: true, email: true } }, _count: { select: { episodes: true } } },
   });
 
   return (
@@ -20,7 +20,7 @@ export default async function HomePage() {
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div>
                     <div><strong>{s.title}</strong> <span className="badge">{s.type}</span></div>
-                    <div className="small">by {s.owner.username ?? s.owner.email ?? "unknown"}</div>
+                    <div className="small">by {s.creator?.username ?? s.creator?.email ?? "unknown"}</div>
                   </div>
                   <div className="small">{s._count.episodes} eps</div>
                 </div>

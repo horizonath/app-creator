@@ -19,10 +19,15 @@ export default async function DashboardPage() {
 
   const me = await prisma.user.findUnique({ where: { id: userId } });
   const mySeries = await prisma.series.findMany({
-    where: { ownerId: userId },
+    where: { creatorId: userId },
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { episodes: true } } },
   });
+  const tipsReceived = await prisma.tip.aggregate({
+  where: { toUserId: userId },
+  _sum: { amount: true },
+  });
+
 
   return (
     <div className="row">
@@ -32,7 +37,7 @@ export default async function DashboardPage() {
           <div className="row">
             <span className="badge">XP: {me?.xp ?? 0}</span>
             <span className="badge">Credits: {me?.creditsBalance ?? 0}</span>
-            <span className="badge">Creator Credits: {me?.creatorCredits ?? 0}</span>
+            <span className="badge">Tips Received: {tipsReceived._sum.amount ?? 0}</span>
             <span className="badge">Plan: {me?.membershipPlan ?? "FREE"}</span>
           </div>
 

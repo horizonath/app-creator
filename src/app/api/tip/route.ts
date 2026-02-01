@@ -1,69 +1,100 @@
-import { auth } from "@/auth";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { auth } from "@/auth";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
 
-const Body = z.object({
+const TipSchema = z.object({
   toUserId: z.string().min(1),
-  amount: z.number().int().min(1).max(999),
-  episodeId: z.string().min(1).optional(),
-  seriesId: z.string().min(1).optional(),
+  amount: z.number().int().min(1),
+  episodeId: z.string().optional().nullable(),
+  seriesId: z.string().optional().nullable(),
 });
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const session = await auth();
   const fromUserId = (session?.user as any)?.id as string | undefined;
   if (!fromUserId) return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
 
-  const json = await req.json().catch(() => null);
-  const parsed = Body.safeParse(json);
+  const body = await req.json().catch(() => null);
+  const parsed = TipSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: "INVALID_BODY" }, { status: 400 });
 
-  if (parsed.data.toUserId === fromUserId) {
-    return Response.json({ error: "CANNOT_TIP_SELF" }, { status: 400 });
+  const { toUserId, amount, episodeId, seriesId } = parsed.data;
+  if (toUserId === fromUserId) return Response.json({ error: "CANNOT_TIP_SELF" }, { status: 400 });
+
+  try {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const from = await tx.user.findUnique({
+        where: { id: fromUserId },
+        select: { id: true, creditsBalance: true },
+      });
+      if (!from) return { ok: false as const, error: "FROM_NOT_FOUND" as const };
+      if (from.creditsBalance < amount) return { ok: false as const, error: "INSUFFICIENT_CREDITS" as const };
+
+      const to = await tx.user.findUnique({
+        where: { id: toUserId },
+        select: { id: true },
+      });
+      if (!to) return { ok: false as const, error: "TO_NOT_FOUND" as const };
+
+      const tip = await tx.tip.create({
+        data: {
+          fromUserId,
+          toUserId,
+          amount,
+          episodeId: episodeId ?? null,
+          seriesId: seriesId ?? null,
+        },
+        select: { id: true },
+      });
+
+      // balances
+      await tx.user.update({
+        where: { id: fromUserId },
+        data: { creditsBalance: { decrement: amount } },
+      });
+
+      await tx.user.update({
+        where: { id: toUserId },
+        data: { creditsBalance: { increment: amount } },
+      });
+
+      // ledger (2 entries)
+      await tx.walletTx.create({
+        data: {
+          userId: fromUserId,
+          type: "TIP",
+          creditDelta: -amount,
+          xpDelta: 0,
+          refType: "TIP",
+          refId: tip.id,
+          meta: { toUserId, episodeId: episodeId ?? null, seriesId: seriesId ?? null },
+        },
+      });
+
+      await tx.walletTx.create({
+        data: {
+          userId: toUserId,
+          type: "TIP",
+          creditDelta: amount,
+          xpDelta: 0,
+          refType: "TIP",
+          refId: tip.id,
+          meta: { fromUserId, episodeId: episodeId ?? null, seriesId: seriesId ?? null },
+        },
+      });
+
+      return { ok: true as const, tipId: tip.id };
+    });
+
+    if (!result.ok) {
+      const status = result.error === "INSUFFICIENT_CREDITS" ? 402 : 404;
+      return Response.json({ error: result.error }, { status });
+    }
+
+    return Response.json({ ok: true, tipId: result.tipId });
+  } catch (e: any) {
+    return Response.json({ error: "INTERNAL_ERROR", detail: String(e?.message ?? e) }, { status: 500 });
   }
-
-  const [from, to] = await Promise.all([
-    prisma.user.findUnique({ where: { id: fromUserId } }),
-    prisma.user.findUnique({ where: { id: parsed.data.toUserId } }),
-  ]);
-  if (!from || !to) return Response.json({ error: "USER_NOT_FOUND" }, { status: 404 });
-  if (from.creditsBalance < parsed.data.amount) return Response.json({ error: "INSUFFICIENT_CREDITS" }, { status: 402 });
-
-const tip = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const created = await tx.tip.create({
-      data: {
-        fromUserId,
-        toUserId: parsed.data.toUserId,
-        amount: parsed.data.amount,
-        episodeId: parsed.data.episodeId ?? null,
-        seriesId: parsed.data.seriesId ?? null,
-      },
-      select: { id: true },
-    });
-
-    await tx.user.update({
-      where: { id: fromUserId },
-      data: {
-        creditsBalance: { decrement: parsed.data.amount },
-        creditLedger: { create: { amount: -parsed.data.amount, reason: "TIP_SENT", refType: "tip", refId: created.id } },
-        xp: { increment: 2 },
-        xpLedger: { create: { amount: 2, reason: "TIP_GIVEN", refType: "tip", refId: created.id } },
-      },
-    });
-
-    await tx.user.update({
-      where: { id: parsed.data.toUserId },
-      data: {
-        creatorCredits: { increment: parsed.data.amount },
-        creditLedger: { create: { amount: parsed.data.amount, reason: "TIP_RECEIVED", refType: "tip", refId: created.id } },
-        xp: { increment: parsed.data.amount * 5 },
-        xpLedger: { create: { amount: parsed.data.amount * 5, reason: "TIP_RECEIVED", refType: "tip", refId: created.id } },
-      },
-    });
-
-    return created;
-  });
-
-  return Response.json({ ok: true, id: tip.id });
 }

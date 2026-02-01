@@ -1,55 +1,85 @@
-import { auth } from "@/auth";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { endOfJakartaDayUtc, startOfJakartaDayUtc } from "@/lib/time";
+import { auth } from "@/auth";
+import type { Prisma } from "@prisma/client"; // ✅ tambah ini
 
-export async function POST() {
+function utcDayRange(now: Date) {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start, end };
+}
+
+export async function POST(_req: NextRequest) {
   const session = await auth();
   const userId = (session?.user as any)?.id as string | undefined;
   if (!userId) return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
 
+  const dailyCredits = parseInt(process.env.FAUCET_DAILY_CREDITS || "2", 10);
+  const minAgeHours = parseInt(process.env.FAUCET_MIN_ACCOUNT_AGE_HOURS || "0", 10);
+
   const now = new Date();
-  const start = startOfJakartaDayUtc(now);
-  const end = endOfJakartaDayUtc(now);
+  const { start, end } = utcDayRange(now);
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) return Response.json({ error: "USER_NOT_FOUND" }, { status: 404 });
+  try {
+    const res = await prisma.$transaction(async (tx: Prisma.TransactionClient) => { // ✅ fix di sini
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true, createdAt: true },
+      });
+      if (!user) return { ok: false as const, error: "USER_NOT_FOUND" as const };
 
-  const minAgeHours = parseInt(process.env.FAUCET_MIN_ACCOUNT_AGE_HOURS || "24", 10);
-  if (now.getTime() - user.createdAt.getTime() < minAgeHours * 60 * 60_000) {
-    return Response.json({ error: "ACCOUNT_TOO_NEW", minAgeHours }, { status: 403 });
+      // min account age
+      if (minAgeHours > 0) {
+        const ageMs = now.getTime() - user.createdAt.getTime();
+        if (ageMs < minAgeHours * 60 * 60 * 1000) {
+          return { ok: false as const, error: "ACCOUNT_TOO_NEW" as const };
+        }
+      }
+
+      // already claimed today?
+      const already = await tx.walletTx.findFirst({
+        where: {
+          userId,
+          type: "FAUCET_CLAIM",
+          createdAt: { gte: start, lt: end },
+        },
+        select: { id: true },
+      });
+
+      if (already) return { ok: false as const, error: "ALREADY_CLAIMED_TODAY" as const };
+
+      // apply credit
+      await tx.user.update({
+        where: { id: userId },
+        data: { creditsBalance: { increment: dailyCredits } },
+      });
+
+      await tx.walletTx.create({
+        data: {
+          userId,
+          type: "FAUCET_CLAIM",
+          creditDelta: dailyCredits,
+          xpDelta: 0,
+          refType: "FAUCET",
+          refId: start.toISOString(),
+          meta: { dailyCredits },
+        },
+      });
+
+      return { ok: true as const, dailyCredits };
+    });
+
+    if (!res.ok) {
+      const status =
+        res.error === "ALREADY_CLAIMED_TODAY" ? 429 :
+        res.error === "ACCOUNT_TOO_NEW" ? 403 :
+        404;
+      return Response.json({ error: res.error }, { status });
+    }
+
+    return Response.json({ ok: true, creditsAdded: res.dailyCredits });
+  } catch (e: any) {
+    return Response.json({ error: "INTERNAL_ERROR", detail: String(e?.message ?? e) }, { status: 500 });
   }
-
-  if (user.lastFaucetClaimAt && user.lastFaucetClaimAt >= start && user.lastFaucetClaimAt < end) {
-    return Response.json({ error: "ALREADY_CLAIMED_TODAY" }, { status: 429 });
-  }
-
-  const base = parseInt(process.env.FAUCET_DAILY_CREDITS || "2", 10);
-  let bonus = 0;
-
-  // membership bonus (optional)
-  if (user.membershipPlan === "PREMIUM" && user.membershipActiveUntil && user.membershipActiveUntil > now) {
-    bonus = parseInt(process.env.MEMBERSHIP_DAILY_BONUS_CREDITS || "1", 10);
-  }
-
-  const added = Math.max(0, base + bonus);
-
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      creditsBalance: { increment: added },
-      lastFaucetClaimAt: now,
-      creditLedger: {
-        create: { amount: added, reason: bonus ? "MEMBERSHIP_BONUS" : "FAUCET_CLAIM", refType: "faucet", refId: start.toISOString() },
-      },
-    },
-    select: { creditsBalance: true },
-  });
-
-  // XP for reader: +2 for daily claim (optional engagement)
-  await prisma.user.update({
-    where: { id: userId },
-    data: { xp: { increment: 2 }, xpLedger: { create: { amount: 2, reason: "DAILY_CLAIM", refType: "faucet", refId: start.toISOString() } } },
-  });
-
-  return Response.json({ added, balance: updated.creditsBalance });
 }

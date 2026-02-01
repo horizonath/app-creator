@@ -10,31 +10,45 @@ async function recordView(episodeId: string, userId?: string) {
 }
 
 async function canReadEpisode(episodeId: string, userId?: string) {
-  const ep = await prisma.episode.findUnique({ where: { id: episodeId }, include: { series: { include: { owner: true } } } });
-  if (!ep) return { ok: false, reason: "Episode not found" as const, ep: null as any };
+  const ep = await prisma.episode.findUnique({
+    where: { id: episodeId },
+    include: {
+      series: { select: { creatorId: true, creator: { select: { id: true, username: true, email: true, image: true } } } },
+      pages: true,
+    },
+  });
 
-  if (!ep.isLocked || ep.unlockType === "FREE") return { ok: true, reason: "FREE" as const, ep };
+  if (!ep) return { ok: false, reason: "NOT_FOUND" as const, ep: null };
 
+  // free
+  if (!ep.isLocked) return { ok: true, reason: "FREE" as const, ep };
+
+  // not logged in -> cannot read locked
   if (!userId) return { ok: false, reason: "LOGIN_REQUIRED" as const, ep };
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  const now = new Date();
-
-  // Membership bypass
-  if (user?.membershipPlan === "PREMIUM" && user.membershipActiveUntil && user.membershipActiveUntil > now) {
-    return { ok: true, reason: "MEMBERSHIP" as const, ep };
-  }
-
-  if (ep.unlockType === "MEMBERSHIP_ONLY") return { ok: false, reason: "MEMBERSHIP_ONLY" as const, ep };
-
-  // CREDIT unlock: check active unlock
-  const unlock = await prisma.episodeUnlock.findUnique({
-    where: { userId_episodeId: { userId, episodeId } },
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { membershipPlan: true, membershipActiveUntil: true },
   });
-  if (unlock && (!unlock.expiresAt || unlock.expiresAt > now)) return { ok: true, reason: "UNLOCKED" as const, ep };
+
+  const now = new Date();
+  const membershipActive =
+    user?.membershipPlan === "PREMIUM" &&
+    !!user.membershipActiveUntil &&
+    user.membershipActiveUntil > now;
+
+  if (membershipActive) return { ok: true, reason: "MEMBERSHIP" as const, ep };
+
+  const unlocked = await prisma.unlock.findUnique({
+    where: { episodeId_userId: { episodeId, userId } },
+    select: { id: true },
+  });
+
+  if (unlocked) return { ok: true, reason: "UNLOCKED" as const, ep };
 
   return { ok: false, reason: "LOCKED" as const, ep };
 }
+
 
 export default async function EpisodePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -43,11 +57,23 @@ export default async function EpisodePage({ params }: { params: Promise<{ id: st
 
   const ep = await prisma.episode.findUnique({
     where: { id },
-    include: {
-      series: { include: { owner: true } },
-      pages: { orderBy: { pageIndex: "asc" } },
-      _count: { select: { likes: true, comments: true, views: true } },
+  include: {
+    series: {
+      include: {
+        creator: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            image: true,
+          },
+        },
+      },
     },
+    pages: { orderBy: { pageNumber : "asc" } },
+    _count: { select: { likes: true, comments: true, views: true } },
+  },
+
   });
   if (!ep) return <div className="card">Episode not found.</div>;
 
@@ -64,7 +90,9 @@ export default async function EpisodePage({ params }: { params: Promise<{ id: st
         <div>
           <div className="small"><a href={`/series/${ep.seriesId}`}>← Back to series</a></div>
           <h2 style={{ margin: "6px 0" }}>{ep.series.title} — #{ep.number}: {ep.title}</h2>
-          <div className="small">by {ep.series.owner.username ?? ep.series.owner.email ?? "unknown"}</div>
+          <div className="small">
+            by {ep.series.creator?.username ?? ep.series.creator?.email ?? "unknown"}
+          </div>
         </div>
         <div className="row" style={{ alignItems: "center" }}>
           <span className="badge">{ep.series.type}</span>
@@ -83,16 +111,16 @@ export default async function EpisodePage({ params }: { params: Promise<{ id: st
       {!access.ok ? (
         <LockedPanel
           episodeId={ep.id}
-          unlockType={ep.unlockType}
-          creditCost={ep.creditCost}
-          creatorId={ep.series.ownerId}
+          episodeNumber={ep.number}
+          unlockCost={ep.unlockCost}
+          creatorId={ep.series.creatorId}
         />
       ) : (
         <ContentView type={ep.series.type} pages={ep.pages.map((p: (typeof ep.pages)[number]) => p.imageUrl)} novelBody={ep.novelBody} />
       )}
 
       <hr />
-      <Actions episodeId={ep.id} creatorId={ep.series.ownerId} />
+      <Actions episodeId={ep.id} creatorId={ep.series.creatorId} />
       <Comments episodeId={ep.id} />
     </div>
   );
@@ -118,28 +146,44 @@ function ContentView({ type, pages, novelBody }: { type: string; pages: string[]
   );
 }
 
-function LockedPanel({ episodeId, unlockType, creditCost }: { episodeId: string; unlockType: string; creditCost: number; creatorId: string }) {
+function LockedPanel({
+  episodeId,
+  episodeNumber,
+  unlockCost,
+  creatorId,
+}: {
+  episodeId: string;
+  episodeNumber: number;
+  unlockCost: number;
+  creatorId: string | null;
+}) {
   return (
     <div className="card">
       <h3>Episode locked</h3>
       <p className="small">
-        {unlockType === "MEMBERSHIP_ONLY"
-          ? "Hanya member premium yang bisa akses episode ini."
-          : `Unlock dengan ${creditCost} credits (akses 24 jam).`}
+        Episode #{episodeNumber} terkunci. Biaya unlock: {unlockCost} credit.
       </p>
       <div className="row">
         <a className="btn" href={`/unlock/${episodeId}`}>Unlock</a>
         <a className="btn secondary" href="/dashboard">Go to dashboard</a>
+
+        {/* Optional: kalau creatorId ada, bisa langsung tip */}
+        {creatorId ? (
+          <a className="btn secondary" href={`/tip?episodeId=${episodeId}&to=${creatorId}`}>Tip Creator</a>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function Actions({ episodeId, creatorId }: { episodeId: string; creatorId: string }) {
+
+function Actions({ episodeId, creatorId }: { episodeId: string; creatorId: string | null }) {
   return (
     <div className="row">
       <a className="btn secondary" href={`/like/${episodeId}`}>Like</a>
-      <a className="btn secondary" href={`/tip?episodeId=${episodeId}&to=${creatorId}`}>Tip Creator</a>
+      {creatorId ? (
+        <a className="btn secondary" href={`/tip?episodeId=${episodeId}&to=${creatorId}`}>Tip Creator</a>
+      ) : null}
     </div>
   );
 }

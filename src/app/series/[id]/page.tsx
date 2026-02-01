@@ -6,7 +6,10 @@ export default async function SeriesPage({ params }: { params: Promise<{ id: str
 
   const s = await prisma.series.findUnique({
     where: { id },
-    include: { owner: true, episodes: { orderBy: { number: "asc" } } },
+    include: {
+      creator: { select: { id: true, username: true, email: true, image: true } },
+      episodes: { orderBy: { number: "asc" } },
+    },
   });
   if (!s) return <div className="card">Series not found.</div>;
 
@@ -15,7 +18,9 @@ export default async function SeriesPage({ params }: { params: Promise<{ id: str
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div>
           <h2 style={{ margin: 0 }}>{s.title} <span className="badge">{s.type}</span></h2>
-          <div className="small">by {s.owner.username ?? s.owner.email ?? "unknown"}</div>
+          <div className="small">
+            by {s.creator?.username ?? s.creator?.email ?? "unknown"}
+          </div>
         </div>
         <Link className="btn secondary" href="/dashboard">Dashboard</Link>
       </div>
@@ -30,9 +35,15 @@ export default async function SeriesPage({ params }: { params: Promise<{ id: str
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div>
                 <strong>#{e.number} — {e.title}</strong>
-                {e.isLocked ? <span className="badge" style={{ marginLeft: 8 }}>Locked • {e.unlockType} • {e.creditCost} credits</span> : <span className="badge" style={{ marginLeft: 8 }}>Free</span>}
+                {e.isLocked ? (
+                  <span className="badge" style={{ marginLeft: 8 }}>
+                    Locked • {e.unlockCost} credits
+                  </span>
+                ) : (
+                  <span className="badge" style={{ marginLeft: 8 }}>Free</span>
+                )}
               </div>
-              <div className="small">{e.publishedAt ? "Published" : "Draft"}</div>
+              <div className="small">Created: {new Date(e.createdAt).toLocaleDateString()}</div>
             </div>
           </Link>
         ))}
